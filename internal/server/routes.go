@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
@@ -21,22 +20,28 @@ func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
 }
 
 func RegisterRoutes(cfg *config.Config) {
+
+	mux := http.NewServeMux()
+
 	oauthConfig := gmail.GetOAuthConfig(
 		cfg.ClientID,
 		cfg.ClientSecret,
 		cfg.RedirectURL,
 	)
 
-	http.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
+	// -------------------------
+	// PUBLIC ROUTES
+	// -------------------------
+
+	mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
 		url := gmail.GetAuthURL(oauthConfig)
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	})
 
-	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		token, err := gmail.ExchangeToken(oauthConfig, code)
 		if err != nil {
@@ -48,35 +53,14 @@ func RegisterRoutes(cfg *config.Config) {
 		fmt.Fprintln(w, "OAuth successful! You can now fetch emails.")
 	})
 
-	http.HandleFunc("/emails", func(w http.ResponseWriter, r *http.Request) {
-		if oauthToken == nil {
-			http.Error(w, "Not authenticated. Login first.", http.StatusUnauthorized)
-			return
-		}
+	// -------------------------
+	// PROTECTED ROUTES
+	// -------------------------
 
-		query := r.URL.Query().Get("q")
-		if strings.TrimSpace(query) == "" {
-			query = ""
-		}
+	protectedMux := http.NewServeMux()
 
-		service, err := gmail.NewGmailService(oauthToken)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	protectedMux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
 
-		emails, err := gmail.FetchEmails(service, query, 10)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(emails)
-	})
-
-	protected := auth.Middleware(mux)
-	protected.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
 		enableCORS(w)
 
 		if r.Method == http.MethodOptions {
@@ -85,7 +69,7 @@ func RegisterRoutes(cfg *config.Config) {
 		}
 
 		if oauthToken == nil {
-			http.Error(w, "Not authenticated", http.StatusUnauthorized)
+			http.Error(w, "Not authenticated with Gmail", http.StatusUnauthorized)
 			return
 		}
 
@@ -95,24 +79,27 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		service, _ := gmail.NewGmailService(oauthToken)
-		// gemini := llm.NewGeminiClient(os.Getenv("GEMINI_API_KEY"))
-		// groq := llm.NewGroqClient(os.Getenv("GROQ_API_KEY"))
+		service, err := gmail.NewGmailService(oauthToken)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		// Create dynamic LLM (Claude / Groq / Gemini)
 		llmClient, err := llm.NewLLM()
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
 
-		// 1️⃣ Build Gmail query using LLM
+		// 1️⃣ Build Gmail query
 		gmailQuery, err := mcp.BuildGmailQuery(llmClient, intent)
-		// gmailQuery, err := mcp.BuildGmailQuery(groq, intent)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
 
-		// 2️⃣ Fetch ALL relevant emails
+		// 2️⃣ Fetch emails
 		emails, err := gmail.FetchEmailsPaged(service, gmailQuery, 1)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -127,22 +114,20 @@ func RegisterRoutes(cfg *config.Config) {
 			)
 		}
 
-		// gemini = llm.NewGeminiClient(os.Getenv("GEMINI_API_KEY"))
-		// llmClient, err := llm.NewLLM()
-		// if err != nil {
-		// 	http.Error(w, err.Error(), 500)
-		// 	return
-		// }
-		// groq = llm.NewGroqClient(os.Getenv("GROQ_API_KEY"))
-
+		// 3️⃣ Run extraction
 		result, err := mcp.RunExtraction(llmClient, intent, emailTexts)
-		// result, err := mcp.RunExtraction(groq, intent, emailTexts)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), 500)
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	})
 
+	// Wrap protected routes with API key middleware
+	mux.Handle("/mcp/", auth.Middleware(protectedMux))
+
+	// Finally register mux globally
+	http.Handle("/", mux)
 }
