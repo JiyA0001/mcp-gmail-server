@@ -21,7 +21,7 @@ func GetOAuthConfig(clientID, clientSecret, redirectURL string) *oauth2.Config {
 }
 
 func GetAuthURL(config *oauth2.Config) string {
-	return config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	return config.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 }
 
 func ExchangeToken(config *oauth2.Config, code string) (*oauth2.Token, error) {
