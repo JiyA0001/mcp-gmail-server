@@ -53,6 +53,14 @@ func RegisterRoutes(cfg *config.Config) {
 		fmt.Fprintln(w, "OAuth successful! You can now fetch emails.")
 	})
 
+	http.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("This app accesses Gmail data only for the authenticated user and does not store or share any data."))
+	})
+
+	http.HandleFunc("/terms", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("This app accesses Gmail data only for the authenticated user and does not store or share any data."))
+	})
+
 	// -------------------------
 	// PROTECTED ROUTES
 	// -------------------------
