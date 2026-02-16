@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"mcp-gmail-server/internal/auth"
@@ -38,6 +39,7 @@ func RegisterRoutes(cfg *config.Config) {
 
 	mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
 		url := gmail.GetAuthURL(oauthConfig)
+		log.Println("OAuth URL:", url)
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	})
 
