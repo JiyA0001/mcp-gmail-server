@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 
-	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
 	"mcp-gmail-server/internal/gmail"
 	"mcp-gmail-server/internal/llm"
@@ -67,9 +66,10 @@ func RegisterRoutes(cfg *config.Config) {
 	// PROTECTED ROUTES
 	// -------------------------
 
-	protectedMux := http.NewServeMux()
+	// protectedMux := http.NewServeMux()
 
-	protectedMux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
+	// protectedMux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
 
 		enableCORS(w)
 
@@ -136,7 +136,7 @@ func RegisterRoutes(cfg *config.Config) {
 	})
 
 	// Wrap protected routes with API key middleware
-	mux.Handle("/mcp/", auth.Middleware(protectedMux))
+	// mux.Handle("/mcp/", auth.Middleware(protectedMux))
 
 	// Finally register mux globally
 	http.Handle("/", mux)
