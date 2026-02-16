@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"os"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -10,7 +9,7 @@ import (
 var DB *sql.DB
 
 func Init() error {
-	dsn := os.Getenv("MYSQL_DSN")
+	// dsn := os.Getenv("MYSQL_DSN")
 	// db, err := sql.Open("mysql", dsn)
 	// if err != nil {
 	// 	return err
