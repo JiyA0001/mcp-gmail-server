@@ -9,7 +9,12 @@ import (
 )
 
 func ListUsers(w http.ResponseWriter, r *http.Request) {
-	user := auth.GetUser(r)
+	user, err := auth.GetUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if user.Role != "admin" {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return

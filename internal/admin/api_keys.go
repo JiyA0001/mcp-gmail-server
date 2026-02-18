@@ -11,7 +11,11 @@ import (
 
 func CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// 1. Get current user (from auth middleware)
-	adminUser := auth.GetUser(r)
+	adminUser, err := auth.GetUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	// 2. Allow only admin
 	if adminUser.Role != "admin" {

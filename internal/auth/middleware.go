@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -59,6 +60,16 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func GetUser(r *http.Request) User {
-	return r.Context().Value(userCtxKey).(User)
+func GetUser(r *http.Request) (*User, error) {
+	userVal := r.Context().Value("user")
+	if userVal == nil {
+		return nil, errors.New("user not in context")
+	}
+
+	user, ok := userVal.(User)
+	if !ok {
+		return nil, errors.New("invalid user type")
+	}
+
+	return &user, nil
 }

@@ -45,7 +45,11 @@ func RegisterRoutes(cfg *config.Config) {
 	// })
 
 	mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
-		user := auth.GetUser(r)
+		user, err := auth.GetUser(r)
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		dbUser, err := auth.GetUserFromDB(user.Email)
 		if err != nil {
@@ -61,7 +65,11 @@ func RegisterRoutes(cfg *config.Config) {
 	})
 
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		user := auth.GetUser(r)
+		user, err := auth.GetUser(r)
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		dbUser, err := auth.GetUserFromDB(user.Email)
 		if err != nil {
@@ -197,7 +205,9 @@ func RegisterRoutes(cfg *config.Config) {
 		json.NewEncoder(w).Encode(result)
 	})
 
-	mux.HandleFunc("/connect/google", auth.SaveGoogleCredentials)
+	mux.Handle("/connect/google",
+		auth.Middleware(http.HandlerFunc(auth.SaveGoogleCredentials)),
+	)
 
 	// Wrap protected routes with API key middleware
 	mux.Handle("/mcp/", auth.Middleware(mux))
