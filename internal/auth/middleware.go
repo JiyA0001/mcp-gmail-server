@@ -12,12 +12,14 @@ import (
 )
 
 type User struct {
-	ID           int
-	Email        string
-	Role         string
-	AccessToken  string
-	RefreshToken string
-	Expiry       time.Time
+	ID                 int
+	Email              string
+	Role               string
+	GoogleClientID     string
+	GoogleClientSecret string
+	AccessToken        string
+	RefreshToken       string
+	Expiry             time.Time
 }
 
 type ctxKey string

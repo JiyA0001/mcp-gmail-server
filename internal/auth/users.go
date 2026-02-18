@@ -29,13 +29,17 @@ func GetUserFromDB(email string) (*User, error) {
 	var user User
 
 	err := db.DB.QueryRow(`
-		SELECT id, email, role, access_token, refresh_token, expiry
-		FROM users
-		WHERE email = ?
-	`, email).Scan(
+        SELECT id, email, role,
+               google_client_id, google_client_secret,
+               access_token, refresh_token, expiry
+        FROM users
+        WHERE email = ?
+    `, email).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Role,
+		&user.GoogleClientID,
+		&user.GoogleClientSecret,
 		&user.AccessToken,
 		&user.RefreshToken,
 		&user.Expiry,

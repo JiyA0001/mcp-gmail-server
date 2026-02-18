@@ -1,15 +1,14 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
 	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
+	"mcp-gmail-server/internal/db"
 	"mcp-gmail-server/internal/gmail"
 	"mcp-gmail-server/internal/llm"
 	"mcp-gmail-server/internal/mcp"
@@ -29,79 +28,72 @@ func RegisterRoutes(cfg *config.Config) {
 
 	mux := http.NewServeMux()
 
-	oauthConfig := gmail.GetOAuthConfig(
-		cfg.ClientID,
-		cfg.ClientSecret,
-		cfg.RedirectURL,
-	)
+	// oauthConfig := gmail.GetOAuthConfig(
+	// 	cfg.ClientID,
+	// 	cfg.ClientSecret,
+	// 	cfg.RedirectURL,
+	// )
 
 	// -------------------------
 	// PUBLIC ROUTES
 	// -------------------------
 
+	// mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
+	// 	url := gmail.GetAuthURL(oauthConfig)
+	// 	log.Println("OAuth URL:", url)
+	// 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+	// })
+
 	mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
-		url := gmail.GetAuthURL(oauthConfig)
-		log.Println("OAuth URL:", url)
+		user := auth.GetUser(r)
+
+		dbUser, err := auth.GetUserFromDB(user.Email)
+		if err != nil {
+			http.Error(w, "User not found", 401)
+			return
+		}
+
+		oauthConfig := auth.BuildOAuthConfig(dbUser)
+
+		url := oauthConfig.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	})
 
-	// mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-	// 	code := r.URL.Query().Get("code")
-	// 	token, err := gmail.ExchangeToken(oauthConfig, code)
-	// 	if err != nil {
-	// 		http.Error(w, err.Error(), http.StatusInternalServerError)
-	// 		return
-	// 	}
-
-	// 	oauthToken = token
-	// 	fmt.Fprintln(w, "OAuth successful! You can now fetch emails.")
-	// })
-
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+		user := auth.GetUser(r)
+
+		dbUser, err := auth.GetUserFromDB(user.Email)
+		if err != nil {
+			http.Error(w, "User not found", 401)
+			return
+		}
+
+		oauthConfig := auth.BuildOAuthConfig(dbUser)
+
 		code := r.URL.Query().Get("code")
 
-		token, err := gmail.ExchangeToken(oauthConfig, code)
+		token, err := oauthConfig.Exchange(r.Context(), code)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Token exchange failed", 500)
 			return
 		}
 
-		// Create client using this token
-		client := oauthConfig.Client(context.Background(), token)
+		_, err = db.DB.Exec(`
+			UPDATE users
+			SET access_token = ?, refresh_token = ?, expiry = ?
+			WHERE id = ?
+		`,
+			token.AccessToken,
+			token.RefreshToken,
+			token.Expiry,
+			dbUser.ID,
+		)
 
-		// Fetch logged-in user's email
-		resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
 		if err != nil {
-			http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+			http.Error(w, "Failed to save token", 500)
 			return
 		}
-		defer resp.Body.Close()
-
-		var userInfo struct {
-			Email string `json:"email"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-			http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
-			return
-		}
-
-		// Save to DB
-		err = auth.SaveUser(userInfo.Email, token)
-		if err != nil {
-			http.Error(w, "Failed to save user", http.StatusInternalServerError)
-			return
-		}
-
-		// Set session cookie
-		http.SetCookie(w, &http.Cookie{
-			Name:     "user_email",
-			Value:    userInfo.Email,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteLaxMode,
-		})
 
 		http.Redirect(w, r, os.Getenv("FRONTEND_URL"), http.StatusTemporaryRedirect)
 	})
@@ -130,11 +122,7 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		// if oauthToken == nil {
-		// 	http.Error(w, "Not authenticated with Gmail", http.StatusUnauthorized)
-		// 	return
-		// }
-
+		// 1️⃣ Get logged-in user from cookie
 		cookie, err := r.Cookie("user_email")
 		if err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -147,10 +135,20 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
+		// 2️⃣ Build OAuth config dynamically
+		oauthConfig := auth.BuildOAuthConfig(user)
+
 		token := &oauth2.Token{
 			AccessToken:  user.AccessToken,
 			RefreshToken: user.RefreshToken,
 			Expiry:       user.Expiry,
+		}
+
+		// 3️⃣ Create Gmail service correctly
+		service, err := gmail.NewGmailService(r.Context(), oauthConfig, token)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
 		}
 
 		intent := r.URL.Query().Get("intent")
@@ -159,27 +157,21 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		service, err := gmail.NewGmailService(token)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		// Create dynamic LLM (Claude / Groq / Gemini)
+		// 4️⃣ Create LLM client
 		llmClient, err := llm.NewLLM()
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
 
-		// 1️⃣ Build Gmail query
+		// 5️⃣ Build Gmail query
 		gmailQuery, err := mcp.BuildGmailQuery(llmClient, intent)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
 
-		// 2️⃣ Fetch emails
+		// 6️⃣ Fetch emails
 		emails, err := gmail.FetchEmailsPaged(service, gmailQuery, 1)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -194,7 +186,7 @@ func RegisterRoutes(cfg *config.Config) {
 			)
 		}
 
-		// 3️⃣ Run extraction
+		// 7️⃣ Run extraction
 		result, err := mcp.RunExtraction(llmClient, intent, emailTexts)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -205,8 +197,10 @@ func RegisterRoutes(cfg *config.Config) {
 		json.NewEncoder(w).Encode(result)
 	})
 
+	mux.HandleFunc("/connect/google", auth.SaveGoogleCredentials)
+
 	// Wrap protected routes with API key middleware
-	// mux.Handle("/mcp/", auth.Middleware(protectedMux))
+	mux.Handle("/mcp/", auth.Middleware(mux))
 
 	// Finally register mux globally
 	http.Handle("/", mux)
