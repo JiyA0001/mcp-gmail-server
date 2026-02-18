@@ -8,12 +8,17 @@ import (
 )
 
 func SaveGoogleCredentials(w http.ResponseWriter, r *http.Request) {
-	user, err := GetUser(r)
+
+	// 1️⃣ Get user_email from cookie
+	cookie, err := r.Cookie("user_email")
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, "Unauthorized - No cookie", http.StatusUnauthorized)
 		return
 	}
 
+	email := cookie.Value
+
+	// 2️⃣ Decode request body
 	var req struct {
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
@@ -24,24 +29,19 @@ func SaveGoogleCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3️⃣ Update using email (NOT id)
 	_, err = db.DB.Exec(`
         UPDATE users
         SET google_client_id = ?, google_client_secret = ?
-        WHERE id = ?
-    `, req.ClientID, req.ClientSecret, user.ID)
+        WHERE email = ?
+    `, req.ClientID, req.ClientSecret, email)
 
 	if err != nil {
 		http.Error(w, "Failed to save credentials", 500)
 		return
 	}
-	fmt.Println("err:", err)
 
-	cookie, err := r.Cookie("user_email")
-	if err != nil {
-		fmt.Println("Cookie not found:", err)
-	} else {
-		fmt.Println("Cookie value:", cookie.Value)
-	}
+	fmt.Println("Saved credentials for:", email)
 
 	w.Write([]byte("Credentials saved"))
 }

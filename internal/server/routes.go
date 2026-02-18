@@ -1,10 +1,11 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 
 	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
@@ -18,21 +19,17 @@ import (
 
 // var oauthToken *oauth2.Token
 
-func enableCORS(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-}
+// CORS is handled by middleware in main.go
 
 func RegisterRoutes(cfg *config.Config) {
 
 	mux := http.NewServeMux()
 
-	// oauthConfig := gmail.GetOAuthConfig(
-	// 	cfg.ClientID,
-	// 	cfg.ClientSecret,
-	// 	cfg.RedirectURL,
-	// )
+	oauthConfig := gmail.GetOAuthConfig(
+		cfg.ClientID,
+		cfg.ClientSecret,
+		cfg.RedirectURL,
+	)
 
 	// -------------------------
 	// PUBLIC ROUTES
@@ -44,66 +41,100 @@ func RegisterRoutes(cfg *config.Config) {
 	// 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	// })
 
-	mux.HandleFunc("/oauth/login", func(w http.ResponseWriter, r *http.Request) {
-		user, err := auth.GetUser(r)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	mux.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		// enableCORS handled by main
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		dbUser, err := auth.GetUserFromDB(user.Email)
-		if err != nil {
-			http.Error(w, "User not found", 401)
+		var body struct {
+			Email string `json:"email"`
+		}
+
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err != nil || body.Email == "" {
+			http.Error(w, "Invalid email", http.StatusBadRequest)
 			return
 		}
 
-		oauthConfig := auth.BuildOAuthConfig(dbUser)
+		// Create user if not exists
+		_, err = db.DB.Exec(`
+			INSERT INTO users (email)
+			VALUES (?)
+			ON DUPLICATE KEY UPDATE email=email
+		`, body.Email)
 
-		url := oauthConfig.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
 
-		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+		// Set cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "user_email",
+			Value:    body.Email,
+			Path:     "/",
+			HttpOnly: true,
+		})
+
+		w.WriteHeader(http.StatusOK)
 	})
 
-	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		user, err := auth.GetUser(r)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		dbUser, err := auth.GetUserFromDB(user.Email)
-		if err != nil {
-			http.Error(w, "User not found", 401)
-			return
-		}
-
-		oauthConfig := auth.BuildOAuthConfig(dbUser)
+	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
 
 		code := r.URL.Query().Get("code")
+		if code == "" {
+			http.Error(w, "Missing code", 400)
+			return
+		}
 
-		token, err := oauthConfig.Exchange(r.Context(), code)
+		// 1. Exchange Access Token
+		token, err := oauthConfig.Exchange(context.Background(), code)
 		if err != nil {
 			http.Error(w, "Token exchange failed", 500)
 			return
 		}
 
-		_, err = db.DB.Exec(`
-			UPDATE users
-			SET access_token = ?, refresh_token = ?, expiry = ?
-			WHERE id = ?
-		`,
-			token.AccessToken,
-			token.RefreshToken,
-			token.Expiry,
-			dbUser.ID,
-		)
-
+		// 2. Fetch User Info (Verify Identity)
+		client := oauthConfig.Client(context.Background(), token)
+		userInfo, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
 		if err != nil {
-			http.Error(w, "Failed to save token", 500)
+			http.Error(w, "Failed to get user info from Google", 500)
+			return
+		}
+		defer userInfo.Body.Close()
+
+		var googleUser struct {
+			Email string `json:"email"`
+		}
+		if err := json.NewDecoder(userInfo.Body).Decode(&googleUser); err != nil {
+			http.Error(w, "Failed to decode google user", 500)
 			return
 		}
 
-		http.Redirect(w, r, os.Getenv("FRONTEND_URL"), http.StatusTemporaryRedirect)
+		// Update or Create the user securely based on Google's verified email
+		_, err = db.DB.Exec(`
+			INSERT INTO users (email, access_token, refresh_token, expiry)
+			VALUES (?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE 
+				access_token=VALUES(access_token),
+				refresh_token=VALUES(refresh_token),
+				expiry=VALUES(expiry)
+		`,
+			googleUser.Email,
+			token.AccessToken,
+			token.RefreshToken,
+			token.Expiry,
+		)
+
+		if err != nil {
+			http.Error(w, "DB update failed", 500)
+			return
+		}
+
+		http.Redirect(w, r, "http://localhost:3000", http.StatusTemporaryRedirect)
 	})
 
 	http.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
@@ -121,14 +152,10 @@ func RegisterRoutes(cfg *config.Config) {
 	// protectedMux := http.NewServeMux()
 
 	// protectedMux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
-	mux.HandleFunc("/mcp/search", func(w http.ResponseWriter, r *http.Request) {
+	// 🔹 PROTECTED ROUTES (Applied strictly to specific handlers)
+	// We wrap the sensitive handlers with auth.Middleware explicitly
 
-		enableCORS(w)
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	searchHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		// 1️⃣ Get logged-in user from cookie
 		cookie, err := r.Cookie("user_email")
@@ -153,7 +180,7 @@ func RegisterRoutes(cfg *config.Config) {
 		}
 
 		// 3️⃣ Create Gmail service correctly
-		service, err := gmail.NewGmailService(r.Context(), oauthConfig, token)
+		service, err := gmail.NewGmailService(oauthConfig, token)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -205,12 +232,46 @@ func RegisterRoutes(cfg *config.Config) {
 		json.NewEncoder(w).Encode(result)
 	})
 
-	mux.Handle("/connect/google",
-		auth.Middleware(http.HandlerFunc(auth.SaveGoogleCredentials)),
-	)
+	// Register with Middleware
+	mux.Handle("/mcp/search", auth.Middleware(searchHandler))
 
-	// Wrap protected routes with API key middleware
-	mux.Handle("/mcp/", auth.Middleware(mux))
+	mux.HandleFunc("/auth/status", func(w http.ResponseWriter, r *http.Request) {
+
+		cookie, err := r.Cookie("user_email")
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]bool{
+				"logged_in": false,
+			})
+			return
+		}
+
+		var googleClientID sql.NullString
+
+		err = db.DB.QueryRow(`
+			SELECT google_client_id
+			FROM users
+			WHERE email = ?
+		`, cookie.Value).Scan(&googleClientID)
+
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]bool{
+				"logged_in": false,
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]bool{
+			"logged_in":       true,
+			"gmail_connected": googleClientID.Valid && googleClientID.String != "",
+		})
+	})
+
+	// mux.Handle("/connect/google",
+	// 	auth.Middleware(http.HandlerFunc(auth.SaveGoogleCredentials)),
+	// )
+	mux.Handle("/connect/google", http.HandlerFunc(auth.SaveGoogleCredentials))
 
 	// Finally register mux globally
 	http.Handle("/", mux)

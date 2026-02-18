@@ -8,7 +8,8 @@ import (
 	"google.golang.org/api/option"
 )
 
-func NewGmailService(ctx context.Context, oauthConfig *oauth2.Config, token *oauth2.Token) (*gmail.Service, error) {
-	client := oauthConfig.Client(ctx, token)
-	return gmail.NewService(ctx, option.WithHTTPClient(client))
+func NewGmailService(config *oauth2.Config, token *oauth2.Token) (*gmail.Service, error) {
+	ctx := context.Background()
+	ts := config.TokenSource(ctx, token)
+	return gmail.NewService(ctx, option.WithTokenSource(ts))
 }

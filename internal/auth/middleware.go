@@ -61,7 +61,7 @@ func Middleware(next http.Handler) http.Handler {
 }
 
 func GetUser(r *http.Request) (*User, error) {
-	userVal := r.Context().Value("user")
+	userVal := r.Context().Value(userCtxKey)
 	if userVal == nil {
 		return nil, errors.New("user not in context")
 	}
