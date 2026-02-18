@@ -6,14 +6,18 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"time"
 
 	"mcp-gmail-server/internal/db"
 )
 
 type User struct {
-	ID    int
-	Email string
-	Role  string
+	ID           int
+	Email        string
+	Role         string
+	AccessToken  string
+	RefreshToken string
+	Expiry       time.Time
 }
 
 type ctxKey string

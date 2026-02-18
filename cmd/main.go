@@ -13,9 +13,7 @@ import (
 func main() {
 	cfg := config.LoadConfig()
 	server.RegisterRoutes(cfg)
-	if err := db.Init(); err != nil {
-		log.Fatal(err)
-	}
+	db.Init()
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
+	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
 	"mcp-gmail-server/internal/gmail"
 	"mcp-gmail-server/internal/llm"
@@ -14,7 +17,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-var oauthToken *oauth2.Token
+// var oauthToken *oauth2.Token
 
 func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -42,16 +45,65 @@ func RegisterRoutes(cfg *config.Config) {
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	})
 
+	// mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	// 	code := r.URL.Query().Get("code")
+	// 	token, err := gmail.ExchangeToken(oauthConfig, code)
+	// 	if err != nil {
+	// 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// 		return
+	// 	}
+
+	// 	oauthToken = token
+	// 	fmt.Fprintln(w, "OAuth successful! You can now fetch emails.")
+	// })
+
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
+
 		token, err := gmail.ExchangeToken(oauthConfig, code)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		oauthToken = token
-		fmt.Fprintln(w, "OAuth successful! You can now fetch emails.")
+		// Create client using this token
+		client := oauthConfig.Client(context.Background(), token)
+
+		// Fetch logged-in user's email
+		resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+		if err != nil {
+			http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		var userInfo struct {
+			Email string `json:"email"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+			http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
+			return
+		}
+
+		// Save to DB
+		err = auth.SaveUser(userInfo.Email, token)
+		if err != nil {
+			http.Error(w, "Failed to save user", http.StatusInternalServerError)
+			return
+		}
+
+		// Set session cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "user_email",
+			Value:    userInfo.Email,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+
+		http.Redirect(w, r, os.Getenv("FRONTEND_URL"), http.StatusTemporaryRedirect)
 	})
 
 	http.HandleFunc("/privacy", func(w http.ResponseWriter, r *http.Request) {
@@ -78,9 +130,27 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		if oauthToken == nil {
-			http.Error(w, "Not authenticated with Gmail", http.StatusUnauthorized)
+		// if oauthToken == nil {
+		// 	http.Error(w, "Not authenticated with Gmail", http.StatusUnauthorized)
+		// 	return
+		// }
+
+		cookie, err := r.Cookie("user_email")
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
+		}
+
+		user, err := auth.GetUserFromDB(cookie.Value)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		token := &oauth2.Token{
+			AccessToken:  user.AccessToken,
+			RefreshToken: user.RefreshToken,
+			Expiry:       user.Expiry,
 		}
 
 		intent := r.URL.Query().Get("intent")
@@ -89,7 +159,7 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		service, err := gmail.NewGmailService(oauthToken)
+		service, err := gmail.NewGmailService(token)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
