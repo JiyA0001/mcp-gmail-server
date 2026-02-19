@@ -1,8 +1,7 @@
 package auth
 
 import (
-	// "database/sql"
-
+	"database/sql"
 	"mcp-gmail-server/internal/db"
 
 	"golang.org/x/oauth2"
@@ -27,6 +26,8 @@ func SaveUser(email string, token *oauth2.Token) error {
 
 func GetUserFromDB(email string) (*User, error) {
 	var user User
+	var clientID, clientSecret, accessToken, refreshToken sql.NullString
+	var expiry sql.NullTime
 
 	err := db.DB.QueryRow(`
         SELECT id, email, role,
@@ -38,15 +39,31 @@ func GetUserFromDB(email string) (*User, error) {
 		&user.ID,
 		&user.Email,
 		&user.Role,
-		&user.GoogleClientID,
-		&user.GoogleClientSecret,
-		&user.AccessToken,
-		&user.RefreshToken,
-		&user.Expiry,
+		&clientID,
+		&clientSecret,
+		&accessToken,
+		&refreshToken,
+		&expiry,
 	)
 
 	if err != nil {
 		return nil, err
+	}
+
+	if clientID.Valid {
+		user.GoogleClientID = clientID.String
+	}
+	if clientSecret.Valid {
+		user.GoogleClientSecret = clientSecret.String
+	}
+	if accessToken.Valid {
+		user.AccessToken = accessToken.String
+	}
+	if refreshToken.Valid {
+		user.RefreshToken = refreshToken.String
+	}
+	if expiry.Valid {
+		user.Expiry = expiry.Time
 	}
 
 	return &user, nil

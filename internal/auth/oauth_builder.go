@@ -14,6 +14,9 @@ func BuildOAuthConfig(user *User) *oauth2.Config {
 		RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
 		Scopes: []string{
 			"https://www.googleapis.com/auth/gmail.readonly",
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+			"openid",
 		},
 		Endpoint: google.Endpoint,
 	}

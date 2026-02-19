@@ -20,12 +20,12 @@ func BuildPrompt(userIntent string, emails []string) string {
 	%s
 
 	Rules:
-	- Extract ONLY relevant information
+	- Extract ONLY relevant information based on the user intent
 	- Return ONLY raw JSON
-	- DO NOT use markdown
-	- DO NOT use backticks
-	- DO NOT add explanation or extra text
-	- Output must start with { and end with }
+	- Use consistently named keys (lowerCamelCase) across all items
+	- If listing emails, use an array under a key like "emails" or "results"
+	- DO NOT use markdown or backticks
+	- DO NOT add explanation
 
 	Output:
 	`, userIntent, strings.Join(emails, "\n\n"))

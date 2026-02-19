@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -12,6 +13,14 @@ var DB *sql.DB
 
 func Init() {
 	dsn := os.Getenv("MYSQL_DSN")
+
+	if !strings.Contains(dsn, "parseTime=true") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&parseTime=true"
+		} else {
+			dsn += "?parseTime=true"
+		}
+	}
 
 	var err error
 	DB, err = sql.Open("mysql", dsn)

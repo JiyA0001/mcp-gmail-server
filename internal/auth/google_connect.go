@@ -9,14 +9,20 @@ import (
 
 func SaveGoogleCredentials(w http.ResponseWriter, r *http.Request) {
 
-	// 1️⃣ Get user_email from cookie
-	cookie, err := r.Cookie("user_email")
+	// 1️⃣ Get auth_token from cookie
+	cookie, err := r.Cookie("auth_token")
 	if err != nil {
 		http.Error(w, "Unauthorized - No cookie", http.StatusUnauthorized)
 		return
 	}
 
-	email := cookie.Value
+	claims, err := ValidateToken(cookie.Value)
+	if err != nil {
+		http.Error(w, "Unauthorized - Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	email := claims.Email
 
 	// 2️⃣ Decode request body
 	var req struct {

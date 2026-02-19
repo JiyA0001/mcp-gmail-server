@@ -17,6 +17,7 @@ func NewGeminiClient(apiKey string) *GeminiClient {
 }
 
 func (g *GeminiClient) Extract(prompt string) (string, error) {
+	// Use a stable model version
 	url := fmt.Sprintf(
 		"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent?key=%s",
 		g.ApiKey,

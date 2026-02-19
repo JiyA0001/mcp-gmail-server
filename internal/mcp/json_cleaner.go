@@ -5,10 +5,15 @@ import "strings"
 func CleanJSON(raw string) string {
 	raw = strings.TrimSpace(raw)
 
-	// Remove markdown ```json and ```
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimPrefix(raw, "```")
-	raw = strings.TrimSuffix(raw, "```")
+	start := strings.IndexAny(raw, "{[")
+	if start == -1 {
+		return raw // fallback
+	}
 
-	return strings.TrimSpace(raw)
+	end := strings.LastIndexAny(raw, "}]")
+	if end == -1 || end < start {
+		return raw // fallback
+	}
+
+	return raw[start : end+1]
 }
