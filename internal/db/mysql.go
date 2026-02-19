@@ -33,4 +33,6 @@ func Init() {
 	}
 
 	log.Println("Database connected")
+
+	CreateTables()
 }
