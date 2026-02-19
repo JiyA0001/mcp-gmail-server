@@ -2,6 +2,7 @@ package db
 
 import (
 	"log"
+	"strings"
 )
 
 func CreateTables() {
@@ -19,7 +20,9 @@ func CreateTables() {
 			active BOOLEAN DEFAULT TRUE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);`,
+		// Try to add column for existing tables (syntax compatible with older MySQL)
+		// We ignore "Duplicate column" error below
+		`ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id INT AUTO_INCREMENT PRIMARY KEY,
 			user_id INT NOT NULL,
@@ -40,7 +43,13 @@ func CreateTables() {
 	for _, query := range queries {
 		_, err := DB.Exec(query)
 		if err != nil {
-			log.Fatalf("Failed to create table: %v\nQuery: %s", err, query)
+			// Ignore "Duplicate column name" error (MySQL Error 1060) which happens if column exists
+			// This is necessary because older MySQL versions don't support "ADD COLUMN IF NOT EXISTS"
+			if strings.Contains(err.Error(), "Duplicate column name") {
+				continue
+			}
+
+			log.Fatalf("Failed to create table/column: %v\nQuery: %s", err, query)
 		}
 	}
 
