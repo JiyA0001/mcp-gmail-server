@@ -9,7 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
 	"mcp-gmail-server/internal/auth"
@@ -35,6 +35,14 @@ func RegisterRoutes(cfg *config.Config) {
 		cfg.ClientSecret,
 		cfg.RedirectURL,
 	)
+
+	// Determine Cookie Settings based on Origin (Prod/HTTPS vs Dev/HTTP)
+	// If the frontend is HTTPS (e.g. Vercel), we MUST use Secure + SameSite=None for cross-origin cookies.
+	useSecureCookie := strings.HasPrefix(cfg.AllowedOrigin, "https://")
+	cookieSameSite := http.SameSiteLaxMode
+	if useSecureCookie {
+		cookieSameSite = http.SameSiteNoneMode
+	}
 
 	// -------------------------
 	// PUBLIC ROUTES
@@ -64,6 +72,48 @@ func RegisterRoutes(cfg *config.Config) {
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	})
 
+	mux.HandleFunc("/auth/signup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var body struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if body.Email == "" || body.Password == "" {
+			http.Error(w, "Email and password are required", http.StatusBadRequest)
+			return
+		}
+
+		// Hash password
+		hash, err := auth.HashPassword(body.Password)
+		if err != nil {
+			http.Error(w, "Error processing password", http.StatusInternalServerError)
+			return
+		}
+
+		// Create user
+		err = auth.CreateUser(body.Email, hash)
+		if err != nil {
+			// Check for duplicate entry (simple string check for MySQL)
+			// A better way is checking mysql error code 1062, but this suffices for now
+			log.Printf("Signup error: %v", err)
+			http.Error(w, "User already exists or DB error", http.StatusConflict)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
+	})
+
 	mux.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		// enableCORS handled by main
 
@@ -73,48 +123,35 @@ func RegisterRoutes(cfg *config.Config) {
 		}
 
 		var body struct {
-			Email string `json:"email"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 
 		err := json.NewDecoder(r.Body).Decode(&body)
-		if err != nil || body.Email == "" {
-			http.Error(w, "Invalid email", http.StatusBadRequest)
+		if err != nil || body.Email == "" || body.Password == "" {
+			http.Error(w, "Invalid email or password", http.StatusBadRequest)
 			return
 		}
 
-		// Create user if not exists
-		_, err = db.DB.Exec(`
-			INSERT INTO users (email)
-			VALUES (?)
-			ON DUPLICATE KEY UPDATE email=email
-		`, body.Email)
-
+		// Get User
+		user, err := auth.GetUserFromDB(body.Email)
 		if err != nil {
-			http.Error(w, "DB error", 500)
+			// Use generic error message for security
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
 
-		// Get User ID
-		var userID int
-		err = db.DB.QueryRow("SELECT id FROM users WHERE email = ?", body.Email).Scan(&userID)
-		if err != nil {
-			http.Error(w, "User not found after insert", 500)
+		// Verify Password
+		if !auth.CheckPasswordHash(body.Password, user.PasswordHash) {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
 
 		// Generate JWT
-		tokenString, err := auth.GenerateToken(userID, body.Email)
+		tokenString, err := auth.GenerateToken(user.ID, user.Email)
 		if err != nil {
 			http.Error(w, "Token generation failed", 500)
 			return
-		}
-
-		// Determine Cookie Settings
-		isProd := os.Getenv("RAILWAY_ENVIRONMENT") != ""
-		secure := isProd
-		sameSite := http.SameSiteLaxMode
-		if isProd {
-			sameSite = http.SameSiteNoneMode // Critical for cross-site (Vercel -> Railway)
 		}
 
 		// Set Secure Cookie
@@ -123,12 +160,85 @@ func RegisterRoutes(cfg *config.Config) {
 			Value:    tokenString,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   secure,
-			SameSite: sameSite,
-			Expires:  time.Now().Add(24 * time.Hour),
+			Secure:   useSecureCookie,
+			SameSite: cookieSameSite,
+			// No Expires/MaxAge means Session Cookie (clears on browser close)
 		})
 
 		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Login successful"})
+	})
+
+	mux.HandleFunc("/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		// Clear Cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "auth_token",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   useSecureCookie,
+			SameSite: cookieSameSite,
+			MaxAge:   -1, // Delete immediately
+			Expires:  time.Now().Add(-1 * time.Hour),
+		})
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Logged out"})
+	})
+
+	mux.HandleFunc("/auth/forgot-password", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var body struct {
+			Email string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" {
+			http.Error(w, "Invalid email", http.StatusBadRequest)
+			return
+		}
+
+		token, err := auth.GenerateResetToken(body.Email)
+		if err != nil {
+			// Don't reveal if user exists
+			log.Printf("Forgot password error for %s: %v", body.Email, err)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"message": "If this email is registered, you will receive a reset link."})
+			return
+		}
+
+		// Send Email (Mock -> Gmail API)
+		auth.SendResetEmail(body.Email, token)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "If this email is registered, you will receive a reset link."})
+	})
+
+	mux.HandleFunc("/auth/reset-password", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var body struct {
+			Token       string `json:"token"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Token == "" || body.NewPassword == "" {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+
+		err := auth.ResetPassword(body.Token, body.NewPassword)
+		if err != nil {
+			log.Printf("Reset password error: %v", err)
+			http.Error(w, "Invalid or expired token", http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Password reset successfully"})
 	})
 
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -262,23 +372,15 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
-		// Determine Cookie Settings
-		isProd := os.Getenv("RAILWAY_ENVIRONMENT") != ""
-		secure := isProd
-		sameSite := http.SameSiteLaxMode
-		if isProd {
-			sameSite = http.SameSiteNoneMode // Critical for cross-site (Vercel -> Railway)
-		}
-
 		// Set Secure Cookie
 		http.SetCookie(w, &http.Cookie{
 			Name:     "auth_token",
 			Value:    tokenString,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   secure,
-			SameSite: sameSite,
-			Expires:  time.Now().Add(24 * time.Hour),
+			Secure:   useSecureCookie,
+			SameSite: cookieSameSite,
+			// No Expires means Session Cookie
 		})
 
 		http.Redirect(w, r, cfg.AllowedOrigin, http.StatusTemporaryRedirect)

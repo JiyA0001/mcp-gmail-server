@@ -25,6 +25,7 @@ func SaveUser(email string, token *oauth2.Token) error {
 }
 
 func GetUserFromDB(email string) (*User, error) {
+	var passwordHash sql.NullString
 	var user User
 	var clientID, clientSecret, accessToken, refreshToken sql.NullString
 	var expiry sql.NullTime
@@ -32,7 +33,8 @@ func GetUserFromDB(email string) (*User, error) {
 	err := db.DB.QueryRow(`
         SELECT id, email, role,
                google_client_id, google_client_secret,
-               access_token, refresh_token, expiry
+               access_token, refresh_token, expiry,
+               password_hash
         FROM users
         WHERE email = ?
     `, email).Scan(
@@ -44,6 +46,7 @@ func GetUserFromDB(email string) (*User, error) {
 		&accessToken,
 		&refreshToken,
 		&expiry,
+		&passwordHash,
 	)
 
 	if err != nil {
@@ -65,6 +68,17 @@ func GetUserFromDB(email string) (*User, error) {
 	if expiry.Valid {
 		user.Expiry = expiry.Time
 	}
+	if passwordHash.Valid {
+		user.PasswordHash = passwordHash.String
+	}
 
 	return &user, nil
+}
+
+func CreateUser(email string, passwordHash string) error {
+	_, err := db.DB.Exec(`
+		INSERT INTO users (email, password_hash)
+		VALUES (?, ?)
+	`, email, passwordHash)
+	return err
 }

@@ -15,6 +15,7 @@ func GetOAuthConfig(clientID, clientSecret, redirectURL string) *oauth2.Config {
 		RedirectURL:  redirectURL,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/gmail.readonly",
+			"https://www.googleapis.com/auth/gmail.send",
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
 			"openid",

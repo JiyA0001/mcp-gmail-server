@@ -16,6 +16,7 @@ type Config struct {
 	Endpoint      oauth2.Endpoint
 	JWTSecret     string
 	AllowedOrigin string
+	SystemEmail   string
 }
 
 func LoadConfig() *Config {
@@ -40,10 +41,12 @@ func LoadConfig() *Config {
 		RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
 		Scopes: []string{
 			"https://www.googleapis.com/auth/gmail.readonly",
+			"https://www.googleapis.com/auth/gmail.send",
 			"https://www.googleapis.com/auth/userinfo.email",
 		},
 		Endpoint:      google.Endpoint,
 		JWTSecret:     jwtSecret,
 		AllowedOrigin: allowedOrigin,
+		SystemEmail:   os.Getenv("SYSTEM_EMAIL"),
 	}
 }

@@ -21,6 +21,7 @@ type User struct {
 	AccessToken        string
 	RefreshToken       string
 	Expiry             time.Time
+	PasswordHash       string
 }
 
 type ctxKey string
