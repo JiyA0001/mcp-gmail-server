@@ -21,6 +21,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 			"https://mcp-gmail-frontend.vercel.app",
 		}
 
+		// Add origin from Environment Variable (if set)
+		if envOrigin := os.Getenv("ALLOWED_ORIGIN"); envOrigin != "" {
+			allowedOrigins = append(allowedOrigins, envOrigin)
+		}
+
 		origin := r.Header.Get("Origin")
 
 		// If Origin is missing, try to determine it from Referer
@@ -46,11 +51,20 @@ func corsMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// If explicitly allowed in ENV (debug mode), authorize it
+		if os.Getenv("CORS_ALLOW_ALL") == "true" {
+			allowed = true
+			if origin == "" {
+				origin = "*"
+			}
+		}
+
 		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+			// Add more headers to cover all bases
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Application, Accept, Origin")
 		}
 
 		if r.Method == http.MethodOptions {
