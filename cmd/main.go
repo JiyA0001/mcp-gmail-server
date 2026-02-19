@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"mcp-gmail-server/internal/auth"
 	"mcp-gmail-server/internal/config"
@@ -13,13 +14,27 @@ import (
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Referer")
-
 		// List of allowed origins
 		allowedOrigins := []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
-			"https://mcp-gmail-frontend.vercel.app/",
+			"https://mcp-gmail-frontend.vercel.app",
+		}
+
+		origin := r.Header.Get("Origin")
+
+		// If Origin is missing, try to determine it from Referer
+		if origin == "" {
+			referer := r.Header.Get("Referer")
+			if referer != "" {
+				for _, allowed := range allowedOrigins {
+					// Check if referer is exactly the allowed origin or starts with allowed origin + "/"
+					if referer == allowed || strings.HasPrefix(referer, allowed+"/") {
+						origin = allowed
+						break
+					}
+				}
+			}
 		}
 
 		// Check if origin is allowed
