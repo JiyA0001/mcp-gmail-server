@@ -47,7 +47,7 @@ func RunExtraction(
 	emails []string,
 ) (models.ExtractedResult, error) {
 
-	chunks := chunkEmails(emails, 10)
+	chunks := chunkEmails(emails, 20)
 
 	finalResult := make(models.ExtractedResult)
 

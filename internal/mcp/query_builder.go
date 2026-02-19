@@ -24,9 +24,11 @@ Convert the user intent into a valid Gmail search query + limit.
 Rules:
 - Output ONLY JSON
 - No markdown
-- Key "query": valid Gmail search operators (e.g. "is:unread label:inbox")
-- Key "limit": integer number of emails to process (default: 10, max: 50)
-- Prefer broad matching
+- Key "query": valid Gmail search operators (e.g. "newer_than:7d")
+- Key "limit": integer number of emails to process
+  - Default: 10 (if no quantity specified)
+  - If user implies "all" or a time range (e.g. "last week", "today"), use a higher limit (e.g. 50, 100, up to 500) to capture everything.
+  - Max safety limit: 500
 
 User intent:
 "%s"
@@ -52,8 +54,9 @@ User intent:
 	if limit <= 0 {
 		limit = 10
 	}
-	if limit > 50 {
-		limit = 50
+	// Increase safety cap to 500
+	if limit > 500 {
+		limit = 500
 	}
 
 	return q.Query, limit, nil

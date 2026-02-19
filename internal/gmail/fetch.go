@@ -110,9 +110,13 @@ func FetchEmails(service *gmail.Service, query string, limit int) ([]Email, erro
 	}
 
 	// Start workers
-	numWorkers := 10
-	if count < 10 {
+	// Start workers
+	numWorkers := 20
+	if count < 20 {
 		numWorkers = count
+	}
+	if count > 100 {
+		numWorkers = 50 // cap at 50 workers
 	}
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
