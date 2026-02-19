@@ -13,7 +13,7 @@ import (
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
+		origin := r.Header.Get("Referer")
 
 		// List of allowed origins
 		allowedOrigins := []string{
