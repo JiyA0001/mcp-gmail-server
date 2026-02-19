@@ -19,7 +19,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		allowedOrigins := []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
-			"https://mcp-gmail-frontend.vercel.app",
+			"https://mcp-gmail-frontend.vercel.app/",
 		}
 
 		// Check if origin is allowed
