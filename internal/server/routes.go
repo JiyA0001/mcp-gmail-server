@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"mcp-gmail-server/internal/auth"
@@ -108,14 +109,22 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
+		// Determine Cookie Settings
+		isProd := os.Getenv("RAILWAY_ENVIRONMENT") != ""
+		secure := isProd
+		sameSite := http.SameSiteLaxMode
+		if isProd {
+			sameSite = http.SameSiteNoneMode // Critical for cross-site (Vercel -> Railway)
+		}
+
 		// Set Secure Cookie
 		http.SetCookie(w, &http.Cookie{
 			Name:     "auth_token",
 			Value:    tokenString,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   false, // Set to true in production
-			SameSite: http.SameSiteLaxMode,
+			Secure:   secure,
+			SameSite: sameSite,
 			Expires:  time.Now().Add(24 * time.Hour),
 		})
 
@@ -253,14 +262,22 @@ func RegisterRoutes(cfg *config.Config) {
 			return
 		}
 
+		// Determine Cookie Settings
+		isProd := os.Getenv("RAILWAY_ENVIRONMENT") != ""
+		secure := isProd
+		sameSite := http.SameSiteLaxMode
+		if isProd {
+			sameSite = http.SameSiteNoneMode // Critical for cross-site (Vercel -> Railway)
+		}
+
 		// Set Secure Cookie
 		http.SetCookie(w, &http.Cookie{
 			Name:     "auth_token",
 			Value:    tokenString,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   false, // Set to true in production
-			SameSite: http.SameSiteLaxMode,
+			Secure:   secure,
+			SameSite: sameSite,
 			Expires:  time.Now().Add(24 * time.Hour),
 		})
 
